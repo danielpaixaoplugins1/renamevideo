@@ -1,0 +1,66 @@
+<?php
+/**
+ * Plugin Name: WPCM Video Renamer
+ * Plugin URI: http://example.com/wpcm-video-renamer
+ * Description: Renomeia todos os vídeos enviados e os salva em uma pasta separada por data. Implementa medidas de segurança para evitar manipulação maliciosa. As URLs dos vídeos no banco de dados são atualizadas.
+ * Version: 1.4
+ * Author: Daniel Oliveira da Paixão
+ * Author URI: http://example.com
+ */
+
+if (!defined('ABSPATH')) exit; // Exit if accessed directly
+
+add_filter('wp_handle_upload_prefilter', 'wpcm_change_video_upload_dir');
+add_action('add_attachment', 'wpcm_rename_uploaded_video');
+
+function wpcm_change_video_upload_dir($file) {
+    $upload_dir = wp_upload_dir();
+    $file_type = wp_check_filetype($file['name']);
+    
+    if (strpos($file_type['type'], 'video') !== false) {
+        $date_path = date('Y/m/d');
+        $custom_dir = '/videos/' . $date_path;
+        
+        if (!file_exists($upload_dir['basedir'] . $custom_dir)) {
+            wp_mkdir_p($upload_dir['basedir'] . $custom_dir);
+        }
+
+        add_filter('upload_dir', function ($dirs) use ($custom_dir, $upload_dir) {
+            $dirs['path'] = $upload_dir['basedir'] . $custom_dir;
+            $dirs['url'] = $upload_dir['baseurl'] . $custom_dir;
+            $dirs['subdir'] = $custom_dir;
+            return $dirs;
+        });
+    }
+
+    return $file;
+}
+
+function wpcm_rename_uploaded_video($attachment_id) {
+    $attachment = get_post($attachment_id);
+    $file_type = wp_check_filetype($attachment->guid);
+
+    if (strpos($file_type['type'], 'video') !== false) {
+        $new_filename = 'video-' . $attachment_id . '.' . $file_type['ext'];
+        $old_filepath = get_attached_file($attachment_id);
+        $new_filepath = dirname($old_filepath) . '/' . $new_filename;
+
+        if (!file_exists($new_filepath)) {
+            if (rename($old_filepath, $new_filepath)) {
+                wp_update_post([
+                    'ID' => $attachment_id,
+                    'guid' => str_replace(basename($attachment->guid), $new_filename, $attachment->guid)
+                ]);
+                update_attached_file($attachment_id, $new_filepath);
+            } else {
+                error_log("WPCM Video Renamer: Falha ao renomear o arquivo $old_filepath");
+            }
+        } else {
+            error_log("WPCM Video Renamer: O arquivo $new_filepath já existe.");
+        }
+    }
+
+    // Remove o filtro para não afetar outros uploads
+    remove_filter('upload_dir', 'wpcm_change_video_upload_dir', 0);
+}
+
